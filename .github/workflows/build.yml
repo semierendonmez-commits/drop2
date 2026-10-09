@@ -1,0 +1,34 @@
+name: build
+on: [push, pull_request, workflow_dispatch]
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Linux packages
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libfreetype-dev libfontconfig1-dev libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxext-dev libxcomposite-dev libgl1-mesa-dev ninja-build
+      - name: Configure
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DDR2_LTO=OFF
+      - name: Build
+        run: cmake --build build --config Release --parallel
+      - name: Tests
+        run: ctest --test-dir build -C Release --output-on-failure
+      - name: auval
+        if: runner.os == 'macOS'
+        run: |
+          mkdir -p ~/Library/Audio/Plug-Ins/Components
+          cp -R "build/DropTwo_artefacts/Release/AU/DROP II.component" ~/Library/Audio/Plug-Ins/Components/
+          killall -9 AudioComponentRegistrar || true
+          auval -v aumu Drp2 Semi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DROPII-${{ runner.os }}
+          path: |
+            build/DropTwo_artefacts/Release/AU
+            build/DropTwo_artefacts/Release/VST3
+            build/DropTwo_artefacts/Release/Standalone

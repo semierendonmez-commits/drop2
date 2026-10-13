@@ -8,6 +8,8 @@
 #include "engine/Transform.h"
 #include "engine/Preview.h"
 #include "Params.h"
+#include <family/FamilyLink.h>
+#include "FamilyManifest.h"
 
 class DropTwoAudioProcessor final : public juce::AudioProcessor,
                                     private juce::AudioProcessorValueTreeState::Listener,
@@ -39,6 +41,9 @@ public:
     void setStateInformation (const void*, int) override;
 
     juce::AudioProcessorValueTreeState apvts;
+    // the family bus (CONDUIT / SETBOOK / BLACKBOX / DATASCREEN): after apvts, it reads the parameters
+    family::Link link { *this, apvts, family::kManifest };
+    void updateTrackProperties (const TrackProperties& p) override { if (p.name.has_value()) link.setInstanceName (*p.name); }
 
     // ---- the source and the four variants (message thread)
     enum Lane { LaneDrums = 0, LaneBass = 1 };
@@ -126,8 +131,13 @@ private:
 
     struct Raw
     {
-        std::atomic<float> *variant, *play, *preview, *level, *drumch, *bassch, *respch, *recbars, *run, *bpm;
+        const family::Param *variant, *play, *preview, *level, *drumch, *bassch, *respch, *recbars, *run, *bpm;
     } raw {};
+
+    // ---- family ports (looked up once); the bays' offsets the variants were last made with
+    int pSection = -1, pSwitch = -1, pNote = -1, pNewSeed = -1;
+    std::vector<const family::Param*> regenParams;
+    std::vector<float> regenOffsets;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (DropTwoAudioProcessor)
 };

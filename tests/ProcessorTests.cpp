@@ -160,6 +160,37 @@ int main()
         if (s == 5) for (auto& v : p.variants()) CHECK (v.identity > 0.99f, "DROP 1 AGAIN is not drop 1 (%f)", v.identity);
     }
 
+    // ---- the family bus: the manifest matches, the loop and its notes reach the bus, IDENTITY from a bay remakes the variants
+    {
+        Rig r;
+        for (const auto& e : r.p.link.getManifest().errors) std::printf ("  manifest: %s\n", e.toRawUTF8());
+        CHECK (r.p.link.getManifest().errors.isEmpty(), "family.json does not match the parameters");
+        CHECK (r.p.link.onBus(), "not on the family bus");
+        familybus::Hub reader;
+        familybus::Hub::Options o; o.dataScreen = false; o.epoch = false;
+        reader.open (o);
+        reader.poll ([] (const familybus::Event&) {});
+        r.run (32.0);
+        int notes = 0, sections = 0, switches = 0;
+        reader.poll ([&] (const familybus::Event& e)
+        {
+            if (e.source != r.p.link.getNode().slotIndex()) return;
+            notes += e.type == familybus::EvNote; sections += e.type == familybus::EvSection; switches += e.type == familybus::EvSwitch;
+        });
+        CHECK (notes == r.ons[1] + r.ons[2] + r.ons[3], "notes on the bus %d, played %d", notes, r.ons[1] + r.ons[2] + r.ons[3]);
+        CHECK (sections >= 2 && switches == 1, "sections %d, switches %d", sections, switches);
+        set (r.p, ids::identity, 0.2f);
+        r.p.poll();
+        const float before = r.p.variants()[0].identity;
+        familybus::Bay bay;
+        bay.open ("TEST");
+        bay.heartbeat();
+        bay.setMod (r.p.link.getNode().slotIndex(), r.p.link.port ("IDENTITY"), 0.8f);
+        r.p.poll();
+        CHECK (r.p.variants()[0].identity > before + 0.2f, "IDENTITY from the bus: %f -> %f", before, r.p.variants()[0].identity);
+        bay.close();
+    }
+
     std::printf ("%d / %d checks passed\n", checks - failures, checks);
     return failures == 0 ? 0 : 1;
 }

@@ -164,12 +164,24 @@ DropTwoAudioProcessor::DropTwoAudioProcessor()
     : AudioProcessor (BusesProperties().withOutput ("Output", juce::AudioChannelSet::stereo(), true)),
       apvts (*this, nullptr, "DROPII", layout())
 {
-    auto P = [this] (const char* id) { return apvts.getRawParameterValue (id); };
+    auto P = [this] (const char* id) { return link.raw (id); };     // knob + CONDUIT
     raw.variant = P (ids::variant); raw.play = P (ids::play); raw.preview = P (ids::preview); raw.level = P (ids::level);
     raw.drumch = P (ids::drumch); raw.bassch = P (ids::bassch); raw.respch = P (ids::respch); raw.recbars = P (ids::recbars);
     raw.run = P (ids::run); raw.bpm = P (ids::bpm);
     for (auto* p : getParameters())
         if (auto* rp = dynamic_cast<juce::RangedAudioParameter*> (p)) apvts.addParameterListener (rp->getParameterID(), this);
+
+    pSection = link.port ("SECTION"); pSwitch = link.port ("SWITCH"); pNote = link.port ("NOTE"); pNewSeed = link.port ("NEWSEED");
+    // the variants are made on the message thread: a bay moving what they are made of makes them again (poll)
+    for (const char* id : { ids::identity, ids::seed, ids::variant, ids::kickamt, ids::lockamt, ids::flipamt })
+        regenParams.push_back (link.raw (id));
+    regenOffsets.assign (regenParams.size(), 0.0f);
+    // BLACKBOX: back to a recorded moment = its seed (the listener regenerates)
+    link.onRecall = [this] (uint32_t s, int)
+    {
+        auto* p = apvts.getParameter (ids::seed);
+        p->setValueNotifyingHost (p->convertTo0to1 ((float) (1u + s % 9999u)));
+    };
 
     theme = (int) readSetting ("theme", 0);
     recNotes.reserve (4096);
@@ -212,7 +224,7 @@ void DropTwoAudioProcessor::prepareToPlay (double sampleRate, int)
 //==============================================================================
 dr2::Settings DropTwoAudioProcessor::currentSettings() const
 {
-    auto v = [this] (const char* id) { return apvts.getRawParameterValue (id)->load(); };
+    auto v = [this] (const char* id) { return link.raw (id)->load(); };
     auto i = [&] (const char* id) { return juce::roundToInt (v (id)); };
     dr2::Settings s;
     s.identity = v (ids::identity);
@@ -240,7 +252,8 @@ double DropTwoAudioProcessor::loopLength() const { return juce::jmax (4.0, juce:
 void DropTwoAudioProcessor::regenerate()
 {
     const auto s = currentSettings();
-    const auto seed = (std::uint32_t) juce::roundToInt (apvts.getRawParameterValue (ids::seed)->load());
+    const auto seed = (std::uint32_t) juce::roundToInt (link.raw (ids::seed)->load());
+    for (size_t k = 0; k < regenParams.size(); ++k) regenOffsets[k] = regenParams[k]->offset();
     for (int v = 0; v < 4; ++v)
         results[(size_t) v] = dr2::generate (srcDrums, srcBass, s, seed * 31u + (std::uint32_t) v * 7919u + 1u);
     publish();
@@ -298,6 +311,10 @@ void DropTwoAudioProcessor::poll()
         }
         generation.fetch_add (1);
     }
+    // CONDUIT: NEWSEED does what the SEED button does; a bay's offset on what the variants are made of remakes them
+    if (link.triggered (pNewSeed)) newSeed();
+    for (size_t k = 0; k < regenParams.size() && ! dirty; ++k)
+        if (std::abs (regenParams[k]->offset() - regenOffsets[k]) > 1.0f / 256.0f) dirty = true;
     if (dirty) regenerate();
     const double now = juce::Time::getMillisecondCounterHiRes();
     retired.erase (std::remove_if (retired.begin(), retired.end(), [now] (auto& p) { return now - p.second > 1000.0; }), retired.end());
@@ -518,6 +535,8 @@ void DropTwoAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
         lastPb = pb;
         return;
     }
+    // SWITCH: what plays changed (DROP 1 / DROP II, or new variants): a = the variant, b = 1 drop 1, 2 drop II
+    if (pb != lastPb || play != lastPlay) link.emit (pSwitch, play == 2 ? juce::roundToInt (raw.variant->load()) : -1, play, 0.0f, 0, ppq);
     if (pb != lastPb || play != lastPlay || std::abs (ppq - lastEnd) > 1.0e-3) allOff (0);
     lastPb = pb;
     lastPlay = play;
@@ -529,6 +548,9 @@ void DropTwoAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
     float* outR = buffer.getNumChannels() > 1 ? buffer.getWritePointer (1) : outL;
     int rendered = 0;
     for (double k = std::floor (ppq / L) * L; k < end; k += L)
+    {
+        // SECTION: the loop starts again: a = 1 drop 1, 2 drop II, f = its length in bars
+        if (k >= ppq) link.emit (pSection, play, 0, (float) (L / 4.0), 0, k);
         for (const auto& e : evs)
         {
             const double t = k + e.time;
@@ -540,6 +562,8 @@ void DropTwoAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
             {
                 if (s) midi.addEvent (juce::MidiMessage::noteOff (ch[e.lane], e.pitch), off);
                 midi.addEvent (juce::MidiMessage::noteOn (ch[e.lane], e.pitch, juce::jlimit (0.01f, 1.0f, e.vel)), off);
+                // NOTE: a = the pitch, b = velocity, u = the lane (0 drums, 1 bass / call, 2 response)
+                link.emit (pNote, e.pitch, juce::jlimit (1, 127, juce::roundToInt (e.vel * 127.0f)), 0.0f, (uint32_t) e.lane, t);
                 s = true;
                 kit.noteOn ((dr2::Preview::Lane) e.lane, e.role, e.pitch, e.vel);
             }
@@ -550,6 +574,7 @@ void DropTwoAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
                 kit.noteOff ((dr2::Preview::Lane) e.lane, e.pitch);
             }
         }
+    }
     if (kitOn) kit.render (outL, outR, rendered, n, level);
     loopPos = (float) std::fmod (end, L);
 }

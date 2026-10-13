@@ -1,0 +1,29 @@
+{
+  "kind": "DROP2",
+  "colour": "#ff375f",
+  "mirror": true,
+
+  "outputs": [
+    { "name": "SECTION",  "event": "SECTION" },
+    { "name": "SWITCH",   "event": "SWITCH" },
+    { "name": "NOTE",     "event": "NOTE" }
+  ],
+
+  "inputs": [
+    { "name": "IDENTITY", "param": "identity" },
+    { "name": "VARIANT",  "param": "variant" },
+    { "name": "KICK.AMT", "param": "kickamt" },
+    { "name": "LOCK.AMT", "param": "lockamt" },
+    { "name": "FLIP.AMT", "param": "flipamt" },
+    { "name": "LEVEL",    "param": "level" },
+    { "name": "NEWSEED",  "trigger": true }
+  ],
+
+  "exclude": ["drumch", "bassch", "respch"],
+
+  "setbook": {
+    "rules": { "seed": "END", "run": "FIXED", "bpm": "FIXED", "recbars": "FIXED" },
+    "exclude": []
+  },
+  "blackbox": { "exclude": [] }
+}

@@ -55,6 +55,14 @@ set(DR2_FORMATS VST3 Standalone)
 if(APPLE)
     list(APPEND DR2_FORMATS AU)
 endif()
+# ---- family-sdk: FamilyBus, SETBOOK, BLACKBOX, CONDUIT (docs: family-sdk/docs/LINK.md) ----------
+# a local checkout instead: -DFETCHCONTENT_SOURCE_DIR_FAMILY_SDK=/path/to/family-sdk
+include(FetchContent)
+FetchContent_Declare(family_sdk
+    GIT_REPOSITORY https://github.com/semierendonmez-commits/family-sdk
+    GIT_TAG f5162b3ab7e1d2c3352dd342629d4f3e4fc635b6)   # family-sdk 1.0.2
+FetchContent_MakeAvailable(family_sdk)
+
 
 juce_add_plugin(DropTwo
     PRODUCT_NAME "DROP II"
@@ -111,3 +119,10 @@ if(DR2_BUILD_TOOLS)
         JucePlugin_Manufacturer="Semi" JucePlugin_VersionString="0.1.0")
     target_link_libraries(DropTwoSnapshot PRIVATE DropTwoData juce::juce_audio_utils juce::juce_opengl juce::juce_recommended_config_flags)
 endif()
+
+# ---- family-sdk: every target that compiles the processor gets the SDK and FamilyManifest.h ------
+foreach(_family_target DropTwo DropTwoProcessorTests DropTwoSnapshot)
+    if(TARGET ${_family_target})
+        family_sdk_add(${_family_target} MANIFEST ${CMAKE_CURRENT_SOURCE_DIR}/family.json)
+    endif()
+endforeach()
